@@ -1,3 +1,4 @@
+from test import rastriginf, Problem, testAll
 
 from ctypes import c_int, c_char_p, c_double, CDLL
 from numpy.ctypeslib import ndpointer
@@ -20,24 +21,30 @@ elif platform.system() == "Darwin":
 else:
     sys.exit("unknown platform")
 
-# initialize dynamic library
-bbcomp = CDLL(dllname)
-bbcomp.configure.restype = c_int
-bbcomp.login.restype = c_int
-bbcomp.numberOfTracks.restype = c_int
-bbcomp.trackName.restype = c_char_p
-bbcomp.setTrack.restype = c_int
-bbcomp.numberOfProblems.restype = c_int
-bbcomp.setProblem.restype = c_int
-bbcomp.dimension.restype = c_int
-bbcomp.numberOfObjectives.restype = c_int
-bbcomp.budget.restype = c_int
-bbcomp.evaluations.restype = c_int
-bbcomp.evaluate.restype = c_int
-bbcomp.evaluate.argtypes = [ndpointer(c_double, flags="C_CONTIGUOUS"), ndpointer(c_double, flags="C_CONTIGUOUS")]
-bbcomp.history.restype = c_int
-bbcomp.history.argtypes = [c_int, ndpointer(c_double, flags="C_CONTIGUOUS"), ndpointer(c_double, flags="C_CONTIGUOUS")]
-bbcomp.errorMessage.restype = c_char_p
+TESTING = True
+
+
+if TESTING:
+    bbcomp = Problem()
+else:
+    # initialize dynamic library
+    bbcomp = CDLL(dllname)
+    bbcomp.configure.restype = c_int
+    bbcomp.login.restype = c_int
+    bbcomp.numberOfTracks.restype = c_int
+    bbcomp.trackName.restype = c_char_p
+    bbcomp.setTrack.restype = c_int
+    bbcomp.numberOfProblems.restype = c_int
+    bbcomp.setProblem.restype = c_int
+    bbcomp.dimension.restype = c_int
+    bbcomp.numberOfObjectives.restype = c_int
+    bbcomp.budget.restype = c_int
+    bbcomp.evaluations.restype = c_int
+    bbcomp.evaluate.restype = c_int
+    bbcomp.evaluate.argtypes = [ndpointer(c_double, flags="C_CONTIGUOUS"), ndpointer(c_double, flags="C_CONTIGUOUS")]
+    bbcomp.history.restype = c_int
+    bbcomp.history.argtypes = [c_int, ndpointer(c_double, flags="C_CONTIGUOUS"), ndpointer(c_double, flags="C_CONTIGUOUS")]
+    bbcomp.errorMessage.restype = c_char_p
 
 # configuration
 LOGFILEPATH = "logs/"
@@ -99,9 +106,9 @@ def safeEvaluate(problemID, point):
         result = bbcomp.evaluate(point, value)
         if result != 0:
             return value[0]
-        print("WARNING: evaluate failed: ", bbcomp.errorMessage().decode('ascii'))
-        print(point)
-        safeSetProblem(problemID)
+            print("WARNING: evaluate failed: ", bbcomp.errorMessage().decode('ascii'))
+            print(point)
+            safeSetProblem(problemID)
 
 
 def safeGetDimension(problemID):
@@ -136,6 +143,9 @@ class Point:
         self.point = point
         self.value = value
 
+    def __repr__(self):
+        return "Point (point:%s value:%s)" % (str(self.point), self.value)
+
 
 # simple constraint handling by truncation
 def truncate2bounds(vec):
@@ -165,27 +175,39 @@ def solveProblem(problemID):
     else:
         print("problem ", problemID, ": starting from evaluation ", evals)
 
+    # reserve some budget for final optimization
     reserved = 100 * dim
     storedResults = np.array([])
 
     if (dim <= 5):
+        # use Nelder-Mead
         for i in range(dim):
             results = nelderMead(problemID, (bud - reserved) / dim, dim)
             storedResults = np.append(storedResults, results)
     else:
-        startingPoints = [np.random.rand(dim)]
+        # chose super-uniformly distributed starting points
+        startingAmount = 2 * dim
+        startingPoints = diversipy.hycusampling.maximin_reconstruction(startingAmount, dim)
+        startingPoints = np.array([Point(x, safeEvaluate(problemID, x)) for x in startingPoints])
+        startingPoints = np.array([x.point for x in sorted(startingPoints, key=lambda a: a.value)])
+        reserved += startingAmount
+        curPoint = 0
+        # use CMA-ES on chosen points
         while (evals < bud - reserved):
-            print("started", evals)
-            results = cmaES(problemID, bud - reserved, dim, evals, startingPoints[-1])
+            # print("started", evals)
+            results = cmaES(problemID, bud - reserved, dim, evals, startingPoints[curPoint])
             storedResults = np.append(storedResults, results)
             evals = safeGetEvaluations(problemID)
-            print("finished", evals)
-            startingPoints = diversipy.hycusampling.maximin_reconstruction(len(startingPoints) + 1, dim, existing_points=startingPoints)
+            # print("finished", evals)
+            curPoint += 1
+            if len(startingPoints) == curPoint:
+                startingPoints = diversipy.hycusampling.maximin_reconstruction(len(startingPoints) + 1, dim, existing_points=startingPoints)
 
+    # use ASSLS
     storedResults = sorted(storedResults, key=lambda a: a.value)
     bestPoints = min(dim, len(storedResults))
     for i in range(bestPoints):
-        RLS(problemID, reserved / bestPoints, dim, storedResults[i])
+        ASSLS(problemID, reserved / bestPoints, dim, storedResults[i], storedResults[0].value)
 
 
 def nelderMead(problemID, bud, dim):
@@ -284,52 +306,81 @@ def cmaESFunc(problemID, bud, point):
         raise StopIteration()
 
 
-def RLS(problemID, bud, dim, startPoint):
+def ASSLS(problemID, bud, dim, startPoint, valBest):
     x = startPoint.point
     val = startPoint.value
     stepSize = 0.01
+    alpha = 0.2
+    beta = 2
+    succFailLimit = 10
+    succStepsLimit = 100
     countEvals = 0
+    succFail = 0
+    succSteps = 0
     while (countEvals < bud):
         d = np.random.normal(x, 1, dim)
         r = 0
         for i in d:
-            r += i*i
-        r = r**(.5)
+            r += i * i
+        r = r ** (.5)
         d /= r
 
         xn = truncate2bounds(x + stepSize * d)
         valn = safeEvaluate(problemID, xn)
         countEvals += 1
-        if (valn < val):
-            print("RLS improved", val, " -> ", valn)
-            x = xn
-            val = valn
-            # reduce step size
+        if countEvals >= bud:
+            break
+        xna = truncate2bounds(x + stepSize * (1 + alpha) * d)
+        valna = safeEvaluate(problemID, xna)
+        countEvals += 1
+        if valn < val or valna < val:
+            if valn < valna:
+                x = xn
+                val = valn
+            else:
+                x = xna
+                val = valna
+                stepSize += stepSize * alpha
+            if val < valBest:
+                print("ASSLS improved: ", valBest, " -> ", val)
+            succFail = 0
         else:
-            stepSize = -stepSize
-            xr = truncate2bounds(x + stepSize * d)
-            if (countEvals >= bud):
-                return
+            succFail += 1
 
-            valr = safeEvaluate(problemID, xr)
-            countEvals += 1
-            if (valr < val):
-                print("RLS improved", val, " -> ", valr)
-                x = xr
-                val = valr
-                # reduce step size
-            stepSize = -stepSize
+        if succFail >= succFailLimit:
+            stepSize -= stepSize * alpha
+            succFail = 0
+
+        if countEvals >= bud:
+            break
+
+        if succSteps % succStepsLimit == 0:
+            xnl = truncate2bounds(x + stepSize * (1 + beta) * d)
+            valnl = safeEvaluate(problemID, xnl)
+
+            if valnl < val:
+                x = xnl
+                val = valnl
+                stepSize = stepSize * (1 + beta)
+
+                if val < valBest:
+                    print("ASSLS improved: ", valBest, " -> ", val, " on extended size")
+
+        succSteps += 1
 
 
-# setup
-# TODO: turn logging on if needed
-result = bbcomp.configure(0, LOGFILEPATH.encode('ascii'))
-if result == 0:
-    sys.exit("configure() failed: " + bbcomp.errorMessage())
+if (TESTING):
+    testAll(bbcomp, solveProblem)
+else:
+    # setup
+    # TODO: turn logging on if needed
+    result = bbcomp.configure(0, LOGFILEPATH.encode('ascii'))
+    if result == 0:
+        sys.exit("configure() failed: " + bbcomp.errorMessage())
 
-safeLogin()
-safeSetTrack()
-n = safeGetNumberOfProblems()
+    safeLogin()
+    safeSetTrack()
+    n = safeGetNumberOfProblems()
 
-for i in range(595, 1000):
-    solveProblem(i)
+    for i in range(595, 1000):
+        solveProblem(i)
