@@ -1,4 +1,4 @@
-from test import rastriginf, Problem, testAll
+from test import Problem, testAll
 
 from ctypes import c_int, c_char_p, c_double, CDLL
 from numpy.ctypeslib import ndpointer
@@ -272,7 +272,7 @@ cmaResults = np.array([])
 # TODO change starting step size
 def cmaES(problemID, bud, dim, evals, startPoint):
     global cmaResults
-    stepSize = 0.15
+    stepSize = 0.1
     minBounds = [0.0] * dim
     maxBounds = [1.0] * dim
     bounds = [minBounds, maxBounds]

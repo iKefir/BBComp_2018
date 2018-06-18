@@ -3,7 +3,7 @@ from functools import reduce
 import numpy as np
 
 
-amountPerDim = 10
+amountPerDim = 2
 
 
 class Problem:
@@ -135,7 +135,7 @@ def testAll(bbcomp, solveProblem):
     file = open("testlog.txt", "w")
     file.write("Test results\n\n")
     file.close()
-    for dim in range(5):
+    for dim in range(10):
         file = open("testlog.txt", "a+")
         file.write("Dimensions: " + str(bbcomp.dims[dim]) + "\n")
         file.close()
