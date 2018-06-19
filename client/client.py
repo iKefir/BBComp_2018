@@ -203,11 +203,15 @@ def solveProblem(problemID):
             if len(startingPoints) == curPoint:
                 startingPoints = diversipy.hycusampling.maximin_reconstruction(len(startingPoints) + 1, dim, existing_points=startingPoints)
 
-    # use ASSLS
+    # use ASSRS
     storedResults = sorted(storedResults, key=lambda a: a.value)
     bestPoints = min(dim, len(storedResults))
+    evals = safeGetEvaluations(problemID)
+    reserved = bud - evals
     for i in range(bestPoints):
-        ASSLS(problemID, reserved / bestPoints, dim, storedResults[i], storedResults[0].value)
+        if (safeGetEvaluations(problemID) >= bud):
+            break
+        ASSRS(problemID, reserved / bestPoints, dim, storedResults[i], storedResults[0].value)
 
 
 def nelderMead(problemID, bud, dim):
@@ -269,7 +273,6 @@ def nelderMead(problemID, bud, dim):
 cmaResults = np.array([])
 
 
-# TODO change starting step size
 def cmaES(problemID, bud, dim, evals, startPoint):
     global cmaResults
     stepSize = 0.1
@@ -306,7 +309,7 @@ def cmaESFunc(problemID, bud, point):
         raise StopIteration()
 
 
-def ASSLS(problemID, bud, dim, startPoint, valBest):
+def ASSRS(problemID, bud, dim, startPoint, valBest):
     x = startPoint.point
     val = startPoint.value
     stepSize = 0.01
@@ -342,7 +345,7 @@ def ASSLS(problemID, bud, dim, startPoint, valBest):
                 val = valna
                 stepSize += stepSize * alpha
             if val < valBest:
-                print("ASSLS improved: ", valBest, " -> ", val)
+                print("ASSRS improved: ", valBest, " -> ", val)
             succFail = 0
         else:
             succFail += 1
@@ -357,6 +360,7 @@ def ASSLS(problemID, bud, dim, startPoint, valBest):
         if succSteps % succStepsLimit == 0:
             xnl = truncate2bounds(x + stepSize * (1 + beta) * d)
             valnl = safeEvaluate(problemID, xnl)
+            countEvals += 1
 
             if valnl < val:
                 x = xnl
@@ -364,7 +368,7 @@ def ASSLS(problemID, bud, dim, startPoint, valBest):
                 stepSize = stepSize * (1 + beta)
 
                 if val < valBest:
-                    print("ASSLS improved: ", valBest, " -> ", val, " on extended size")
+                    print("ASSRS improved: ", valBest, " -> ", val, " on extended size")
 
         succSteps += 1
 
@@ -382,5 +386,5 @@ else:
     safeSetTrack()
     n = safeGetNumberOfProblems()
 
-    for i in range(595, 1000):
+    for i in range(0, 1000):
         solveProblem(i)

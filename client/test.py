@@ -19,16 +19,19 @@ class Problem:
         return 100 * self.dim ** 2
 
     def evaluate(self, point, value):
-        self.evals += 1
-        value[0] = self.fn(point + self.dlt)
-        self.avVal += value[0]
-        if (self.bestVal > value[0]):
-            self.bestVal = value[0]
-            self.bvEval = self.evals
-            if self.logging:
-                print("Eval: ", self.evals, "Point: ", point, "Value: ", value[0])
+        if (self.evals >= self.budget()):
+            return 0
+        else:
+            self.evals += 1
+            value[0] = self.fn(point + self.dlt)
+            self.avVal += value[0]
+            if (self.bestVal > value[0]):
+                self.bestVal = value[0]
+                self.bvEval = self.evals
+                if self.logging:
+                    print("Eval: ", self.evals, "Point: ", point, "Value: ", value[0])
 
-        return 1
+            return 1
 
     def evaluations(self):
         return self.evals
